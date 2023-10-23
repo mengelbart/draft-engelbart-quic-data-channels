@@ -49,7 +49,7 @@ establishment shares some aspects between media and data communication, others,
 such as congestion control, transmission prioritization, and encryption, happen
 independently in the stacks of the involved protocols (SCTP, DTLS, SRTP).
 
-QUIC is a new, secure, multiplexed transport providing reliable communication
+QUIC is a secure, multiplexed transport providing reliable communication
 over uni- and bidirectional streams and unreliable datagrams. With the
 development of RTP over QUIC (RoQ), there is already an alternative for media
 communication using QUIC instead of SRTP for RTP media communication. One of the
@@ -145,11 +145,11 @@ connection.
 
 ## Limited Number of Retransmissions
 
-> **TODO:** How can this be implemented over QUIC? Do we need it?
-> Datagrams are an option, but that would limit the message size to MTU size or
-> require fragmentation over datagrams.
-> It could also be an API requirement to the underlying QUIC stack, but that
-> may not be easy to get support for.
+> **TODO:** This mode is hard to implement on top of QUIC because it requires an
+> API to let the QUIC stack know after how many retransmissions it should stop
+> reset the stream. We suggest keeping this mode out of the protocol.
+> Application designers can still implement similar features using the QUIC
+> Datagram extension.
 
 ## Limited Duration of Retransmissions
 
@@ -210,13 +210,10 @@ managed by IANA and follow the registry defined in {{Section 8.2.2 of
 Priority:
 : The message priority as described in {{message-priority}}.
 
-Reliability Parameter:
-: For reliable data channels, this field MUST be set to 0 on the sending side
-and MUST be ignored on the receiving side. If a partially reliable data channel
-with a limited number of retransmissions is used, this field specifies the
-number of retransmissions. If a partially reliable data channel with a limited
-lifetime is used, this field specifies the maximum lifetime in milliseconds (see
-also {{Section 5.1 of !RFC8832}}).
+Reliability Parameter: : For reliable data channels, this field MUST be set to 0
+on the sending side and MUST be ignored on the receiving side. If a partially
+reliable data channel with a limited lifetime is used, this field specifies the
+maximum lifetime in milliseconds (see also {{Section 5.1 of !RFC8832}}).
 
 Label Length:
 : A variable-length integer specifying the length of the label field in bytes.
@@ -238,7 +235,7 @@ Registry" created in {{!RFC6455}}. This string is UTF-8 encoded, as specified in
 ## Data Channel Close Message
 
 ~~~
-Data Channel Open Message {
+Data Channel Close Message {
   Channel ID (i),
   Message Type(i) = 0x01,
 }
@@ -279,7 +276,7 @@ Channel ID:
 : The unique identifier of the data channel.
 
 Message Type:
-: The Data Channel Open Message type is always set to `0x02`.
+: The Data Message type is always set to `0x02`.
 
 Sequence Number:
 : A variable-length integer specifying the sequence number in the channel for
