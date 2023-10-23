@@ -1,0 +1,426 @@
+
+
+
+
+Network Working Group                                       M. Engelbart
+Internet-Draft                                                    J. Ott
+Intended status: Standards Track             Technical University Munich
+Expires: 25 April 2024                                   23 October 2023
+
+
+                           QUIC Data Channels
+               draft-engelbart-quic-data-channels-latest
+
+Abstract
+
+   WebRTC data channels provide data communication between peers with
+   varying reliability and ordering properties.  WebRTC data channels
+   traditionally use SCTP layered on top of DTLS over UDP.  This
+   document describes how WebRTC data channels can be layered over QUIC.
+
+Discussion Venues
+
+   This note is to be removed before publishing as an RFC.
+
+   Discussion of this document takes place on the QUIC Working Group
+   mailing list (quic@ietf.org), which is archived at
+   https://mailarchive.ietf.org/arch/browse/quic/.
+
+   Source for this draft and an issue tracker can be found at
+   https://github.com/mengelbart/draft-engelbart-quic-data-channels.
+
+Status of This Memo
+
+   This Internet-Draft is submitted in full conformance with the
+   provisions of BCP 78 and BCP 79.
+
+   Internet-Drafts are working documents of the Internet Engineering
+   Task Force (IETF).  Note that other groups may also distribute
+   working documents as Internet-Drafts.  The list of current Internet-
+   Drafts is at https://datatracker.ietf.org/drafts/current/.
+
+   Internet-Drafts are draft documents valid for a maximum of six months
+   and may be updated, replaced, or obsoleted by other documents at any
+   time.  It is inappropriate to use Internet-Drafts as reference
+   material or to cite them other than as "work in progress."
+
+   This Internet-Draft will expire on 25 April 2024.
+
+Copyright Notice
+
+   Copyright (c) 2023 IETF Trust and the persons identified as the
+   document authors.  All rights reserved.
+
+   This document is subject to BCP 78 and the IETF Trust's Legal
+   Provisions Relating to IETF Documents (https://trustee.ietf.org/
+   license-info) in effect on the date of publication of this document.
+   Please review these documents carefully, as they describe your rights
+   and restrictions with respect to this document.  Code Components
+   extracted from this document must include Revised BSD License text as
+   described in Section 4.e of the Trust Legal Provisions and are
+   provided without warranty as described in the Revised BSD License.
+
+Table of Contents
+
+   1.  Introduction
+   2.  Connection Establishment
+     2.1.  Draft version identification
+   3.  Messages and QUIC Streams
+   4.  The Data Channel Establishment Protocol
+   5.  Message Ordering
+   6.  Message Priority
+   7.  Partial Reliability
+     7.1.  Limited Number of Retransmissions
+     7.2.  Limited Duration of Retransmissions
+   8.  Message Types and Formats
+     8.1.  Data Channel Open Message
+     8.2.  Data Channel Close Message
+     8.3.  Data Message
+   9.  Error Handling
+   10. Security Considerations
+   11. IANA Considerations
+     11.1.  ALPN Registration
+     11.2.  Registration of a QUIC Data Channels Identification String
+     11.3.  Error Codes Registry
+   12. Normative References
+   Acknowledgments
+   Authors' Addresses
+
+1.  Introduction
+
+   The WebRTC framework is a collection of protocols and APIs to enable
+   endpoints to communicate using audio and video streams and arbitrary
+   data.  In WebRTC, real-time media and data communication happen in
+   parallel over two independent connections and transport protocols.
+   While media communication in WebRTC uses SRTP over UDP, WebRTC data
+   channels allow two endpoints to exchange data over a secure,
+   multiplexed, bidirectional channel using SCTP layered on top of DTLS
+   over UDP.  Data channels are streams of framed messages, which can be
+   ordered or unordered and support different reliability models.  While
+   the connection establishment shares some aspects between media and
+   data communication, others, such as congestion control, transmission
+   prioritization, and encryption, happen independently in the stacks of
+   the involved protocols (SCTP, DTLS, SRTP).
+
+   QUIC is a secure, multiplexed transport providing reliable
+   communication over uni- and bidirectional streams and unreliable
+   datagrams.  With the development of RTP over QUIC (RoQ), there is
+   already an alternative for media communication using QUIC instead of
+   SRTP for RTP media communication.  One of the main requirements
+   during the development of RoQ was the ability to share a single QUIC
+   connection for media communication and arbitrary data exchange.
+   Using QUIC as a common protocol for media and data would allow for
+   easy sharing of encryption context, congestion control, and
+   prioritization among all transmissions between two endpoints.  While
+   RoQ includes capabilities for multiplexing RTP, RTCP, and other
+   protocols in one QUIC connection, no such protocol is currently
+   defined.
+
+   This document aims to fill this gap by specifying a data
+   communication protocol similar to WebRTC data channels that can run
+   over a QUIC connection, multiplexed with RoQ.  The protocol defined
+   in this document is referred to as QUIC Data Channels (QDC).
+
+   WebRTC data channels have several use cases and requirements defined
+   in [RFC8831].  The data channel protocol defined in this protocol
+   tries to fulfill the same requirements.
+
+   The remainder of this document is organized as follows:
+
+2.  Connection Establishment
+
+   QUIC requires the use of ALPN [RFC7301] during connection setup.
+   Data channels over QUIC use the "qdc" token during the TLS handshake.
+
+2.1.  Draft version identification
+
+      *RFC Editor's note:* Please remove this section prior to
+      publication of a final version of this document.
+
+   Data channels over QUIC use "qdc" as the ALPN identifier.
+
+   Only implementations of the final, published RFC can identify
+   themselves as "qdc".  Until such an RFC exists, implementations MUST
+   NOT identify themselves using this string.
+
+   Implementations of draft versions of the protocol MUST add the string
+   "-" and the corresponding draft number to the identifier.  For
+   example, draft-engelbart-quic-data-channels-04 is identified using
+   the string "qdc-04".
+
+   Non-compatible experiments based on these draft versions MUST append
+   the string "-" and an experiment name to the identifier.
+
+3.  Messages and QUIC Streams
+
+   QDC uses a message abstraction on top of QUIC streams.  To provide
+   framed messages to the application, QDC uses a single QUIC stream for
+   each message.  An endpoint MUST close a QUIC stream after sending a
+   message on the stream.  Message framing is implicitly provided by
+   QUIC streams.  Messages sizes are only limited by the maximum size of
+   a QUIC stream.
+
+4.  The Data Channel Establishment Protocol
+
+   The data channel establishement protocol (DCEP) is defined in
+   [RFC8832].  DCEP provides functionality to setup data channels
+   between two peers without external signaling.  QDC uses a similar
+   protocol to establish new data channels.  To open a new data channel,
+   an endpoint sends a Data Channel Open Message.
+
+   The Open Message includes a channel identifier that will be used to
+   uniquely identify the data channel.  To avoid collisions where both
+   sides try to open a data channel with the same stream identifiers,
+   each side MUST use streams with either even or odd stream identifiers
+   when sending a Data Channel Open Message.  When using QUIC, the
+   method used to determine which side uses odd or even is based on the
+   underlying DTLS connection role: the side acting as the QUIC client
+   MUST use streams with even stream identifiers; the side acting as the
+   QUIC server MUST use streams with odd stream identifiers.
+
+5.  Message Ordering
+
+   Data channels are streams of ordered or unordered messages.  The type
+   of the data channel determines if the messages are ordered or
+   unordered.  Data Messages on ordered data channels have an additional
+   Sequence Number, that a receiver can use to reorder messages that
+   arrived out of order.  Each message of an ordered data channel MUST
+   carry the sequence number.  Messages on unordered data channels MUST
+   NOT carry sequence numbers.  Endpoints MUST treat messages without
+   sequence number on an ordered channel as an error of type
+   PROTOCOL_VIOLATION.  Endpoints SHOULD treat messages with a sequence
+   number on an unordered data channel as an error of type
+   PROTOCOL_VIOLATION.
+
+6.  Message Priority
+
+      *TODO*
+
+7.  Partial Reliability
+
+   Data channels support two partial reliability modes.  Reliability can
+   either be limited in the number of retransmissions or it can be
+   expressed as a deadline after which no further retransmissions will
+   occur.  This section explains how these modes are supported by
+   leveraging the capabilities of the underlying QUIC connection.
+
+7.1.  Limited Number of Retransmissions
+
+      *TODO:* This mode is hard to implement on top of QUIC because it
+      requires an API to let the QUIC stack know after how many
+      retransmissions it should stop reset the stream.  We suggest
+      keeping this mode out of the protocol.  Application designers can
+      still implement similar features using the QUIC Datagram
+      extension.
+
+7.2.  Limited Duration of Retransmissions
+
+   The sender can limit the lifetime of a message on a data channel.
+   The lifetime is defined per data channel and is the same for every
+   message sent on the channel.  The lifetime of the messages on a data
+   channel is communicated in the _Reliability Parameter_ of the Data
+   Channel Open Messages (see Section 8.1).
+
+   The lifetime of a message starts when the sender opens a QUIC stream
+   to send the message on.  The lifetime ends after the amount of time
+   that was announced in the _Reliability Parameter_. When the lifetime
+   of a message expires, the sender of the message SHOULD close the
+   stream using QUIC's RESET_STREAM frame.
+
+      *TODO:* Instead of RESET_STREAM, one could use CLOSE_STREAM with
+      an offset after the message header, so that the receiver knows
+      which channel the message belonged to, what type it head and
+      optionally can read sequence number and length.
+
+8.  Message Types and Formats
+
+   This section describes the message formats used for QUIC data
+   channels.
+
+8.1.  Data Channel Open Message
+
+   The format of Data Channel Open Messages is depicted in Figure 1.
+
+      *TODO:* Explain how to choose channel IDs (similar to Section 4 of
+      [RFC8832].
+
+   Data Channel Open Message {
+     Channel ID (i),
+     Message Type (i) = 0x00,
+     Channel Type (8),
+     Priority (i),
+     Reliability Parameter (i),
+     Label Length (i),
+     Label (..),
+     Protocol Length (i),
+     Protocol (..),
+   }
+
+                    Figure 1: Data Channel Open Message
+
+   Channel ID:  A unique identifier of the data channel.
+
+   Message Type:  The Data Channel Open Message type is always set to
+      0x00.
+
+   Channel Type:  This field specifies the type of data channel to be
+      opened.  The values are managed by IANA and follow the registry
+      defined in Section 8.2.2 of [RFC8832].
+
+   Priority:  The message priority as described in Section 6.
+
+   Reliability Parameter: : For reliable data channels, this field MUST
+   be set to 0 on the sending side and MUST be ignored on the receiving
+   side.  If a partially reliable data channel with a limited lifetime
+   is used, this field specifies the maximum lifetime in milliseconds
+   (see also Section 5.1 of [RFC8832]).
+
+   Label Length:  A variable-length integer specifying the length of the
+      label field in bytes.
+
+   Label:  The name of the data channel as a UTF-8-encoded string, as
+      specified in [RFC3629].  This may be an empty string.
+
+   Protocol Length:  A variable-length integer specifying the length of
+      the protocol field in bytes.
+
+   Protocol:  If this is an empty string, the protocol is unspecified.
+      If it is a non-empty string, it specifies a protocol registered in
+      the "WebSocket Subprotocol Name Registry" created in [RFC6455].
+      This string is UTF-8 encoded, as specified in [RFC3629].
+
+8.2.  Data Channel Close Message
+
+   Data Channel Close Message {
+     Channel ID (i),
+     Message Type(i) = 0x01,
+   }
+
+                    Figure 2: Data Channel Close Message
+
+   Channel ID:  The unique identifier of the data channel.
+
+   Message Type:  The Data Channel Close Message type is always set to
+      0x01.
+
+8.3.  Data Message
+
+   The Data Message has two optional fields.  The message type field
+   takes the form 0b000001XX.  The two low-order bits determine the
+   fields that are present in the message:
+
+   *  The SEQ bit (0x02) indicates that a sequence number is present.
+      If this bit is set to 0, the Sequence Number field is absent.  If
+      this bit is set to 1, the Sequence Number field is present.
+
+   *  The LEN bit (0x01) indicates that a Length field is present.  If
+      this bit is set to 0, the Length field is absent and the Message
+      Data field extends to the end of the packet.  If this bit is set
+      to 1, the Length field is present.
+
+   Data Message {
+     Channel ID (i),
+     Message Type (i) = 0x02..0x05
+     [Sequence Number (i)],
+     [Length (i)],
+     Message Data (..),
+   }
+
+                                  Figure 3
+
+   Channel ID:  The unique identifier of the data channel.
+
+   Message Type:  The Data Message type is always set to 0x02.
+
+   Sequence Number:  A variable-length integer specifying the sequence
+      number in the channel for the message.  This field is present when
+      the SEQ bit is set to 1.
+
+   Length:  A variable-length integer specifying the length of the
+      Message Data field.  This field is present when the LEN bit is set
+      to 1.  When the LEN bit is set to 0, the Message Data field
+      consumes all the remaining bytes in the QUIC stream.
+
+   Message Data:  The bytes of the message to be delivered.
+
+9.  Error Handling
+
+10.  Security Considerations
+
+   The security considerations for the QUIC protocol and datagram
+   extension described in Section 21 of [RFC9000], Section 9 of
+   [RFC9001], Section 8 of [RFC9002] and Section 6 of [RFC9221] apply.
+
+11.  IANA Considerations
+
+11.1.  ALPN Registration
+
+11.2.  Registration of a QUIC Data Channels Identification String
+
+   This document creates a new registration for the identification of
+   QUIC Data Channels in the "TLS Application-Layer Protocol Negotiation
+   (ALPN) Protocol IDs" registry [RFC7301].
+
+   The "qdc" string identifies QUIC Data Channels:
+
+   Protocol:  QUIC Data Channels
+
+   Identification Sequence:  TODO
+
+   Specification:  This document
+
+11.3.  Error Codes Registry
+
+12.  Normative References
+
+   [RFC3629]  Yergeau, F., "UTF-8, a transformation format of ISO
+              10646", STD 63, RFC 3629, DOI 10.17487/RFC3629, November
+              2003, <https://www.rfc-editor.org/rfc/rfc3629>.
+
+   [RFC6455]  Fette, I. and A. Melnikov, "The WebSocket Protocol",
+              RFC 6455, DOI 10.17487/RFC6455, December 2011,
+              <https://www.rfc-editor.org/rfc/rfc6455>.
+
+   [RFC7301]  Friedl, S., Popov, A., Langley, A., and E. Stephan,
+              "Transport Layer Security (TLS) Application-Layer Protocol
+              Negotiation Extension", RFC 7301, DOI 10.17487/RFC7301,
+              July 2014, <https://www.rfc-editor.org/rfc/rfc7301>.
+
+   [RFC8831]  Jesup, R., Loreto, S., and M. Tüxen, "WebRTC Data
+              Channels", RFC 8831, DOI 10.17487/RFC8831, January 2021,
+              <https://www.rfc-editor.org/rfc/rfc8831>.
+
+   [RFC8832]  Jesup, R., Loreto, S., and M. Tüxen, "WebRTC Data Channel
+              Establishment Protocol", RFC 8832, DOI 10.17487/RFC8832,
+              January 2021, <https://www.rfc-editor.org/rfc/rfc8832>.
+
+   [RFC9000]  Iyengar, J., Ed. and M. Thomson, Ed., "QUIC: A UDP-Based
+              Multiplexed and Secure Transport", RFC 9000,
+              DOI 10.17487/RFC9000, May 2021,
+              <https://www.rfc-editor.org/rfc/rfc9000>.
+
+   [RFC9001]  Thomson, M., Ed. and S. Turner, Ed., "Using TLS to Secure
+              QUIC", RFC 9001, DOI 10.17487/RFC9001, May 2021,
+              <https://www.rfc-editor.org/rfc/rfc9001>.
+
+   [RFC9002]  Iyengar, J., Ed. and I. Swett, Ed., "QUIC Loss Detection
+              and Congestion Control", RFC 9002, DOI 10.17487/RFC9002,
+              May 2021, <https://www.rfc-editor.org/rfc/rfc9002>.
+
+   [RFC9221]  Pauly, T., Kinnear, E., and D. Schinazi, "An Unreliable
+              Datagram Extension to QUIC", RFC 9221,
+              DOI 10.17487/RFC9221, March 2022,
+              <https://www.rfc-editor.org/rfc/rfc9221>.
+
+Acknowledgments
+
+Authors' Addresses
+
+   Mathis Engelbart
+   Technical University Munich
+   Email: mathis.engelbart@gmail.com
+
+
+   Jörg Ott
+   Technical University Munich
+   Email: ott@in.tum.de
